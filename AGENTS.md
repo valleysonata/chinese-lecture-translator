@@ -19,13 +19,16 @@ LLM translation → English output.
 | `core/asr.py` | `ASRWorker` — background transcription thread (bounded queue) |
 | `core/live_translator.py` | `TranslationWorker` — background translation thread (bounded queue, rolling context) |
 | `core/session_log.py` | `SessionLogger` — thread-safe JSONL event logging for live sessions |
-| `core/glossary.py` | Phase 4: glossary parsing (`load_glossary`) + prompt injection (`apply_glossary`) |
-| `core/pipeline.py` | `LivePipeline` — shared capture→VAD→ASR→translation orchestration (console script + overlay) |
+| `core/glossary.py` | Phase 4 (optional/advanced): glossary parsing (`load_glossary`) + prompt injection (`apply_glossary`) |
+| `core/slides.py` | Phase 4 (primary): bounded PDF text extraction (`extract_pdf_text`) + `LECTURE SLIDES` prompt block (`compose_system_prompt`) |
+| `core/pipeline.py` | `LivePipeline` — shared capture→VAD→ASR→translation orchestration (console script + main window app) |
+| `core/overlay_window.py` | Phase 5: `SubtitleOverlay` — frameless, topmost, click-through bottom subtitle bar (optional app mode) |
 | `providers/base.py` | `ASREngine`, `TranslationEngine`, `ContextEngine` ABCs + `classify_error()` |
 | `providers/groq_asr.py` | Groq Whisper engine + `_filter_hallucinations()` |
 | `providers/groq_translation.py` | Groq LLM translation engine + `SYSTEM_PROMPT` |
-| `scripts/` | Live harnesses (`test_phase1/2/3.py`, `overlay.py` for Phase 5, `verify_automatic_segmentation.py`) |
-| `tests/` | Offline regression tests (no microphone/API required; `test_overlay_ui.py` opens a window briefly) |
+| `scripts/app.py` | Phase 5 launcher: main window UI (Start/Stop, slides drop, feed, subtitle-bar toggle) |
+| `scripts/` | Live harnesses (`test_phase1/2/3.py`, `app.py` for Phase 5, `verify_automatic_segmentation.py`) |
+| `tests/` | Offline regression tests (no microphone/API required; `test_overlay_ui.py` / `test_app_ui.py` open a window briefly) |
 | `storage/audio_chunks/` | Saved WAV segments (gitignored) |
 | `storage/session_logs/` | JSONL session logs: transcripts, translations, latencies, drops (gitignored) |
 
@@ -53,24 +56,32 @@ LLM translation → English output.
       - Offline regression tests: VAD filtering, hallucination filter, backpressure
 - [x] **Feat 3.1.2: Bounded audio queue** — `AudioCapture` queue capped at ~6.1 s
       with drop-oldest backpressure; dropped frames counted in summary + session log
-- [x] **Phase 4: Course Glossary Integration (manual `.txt`, this pass)**
-      - `core/glossary.py`: one-term-per-line file (`#` comments, dedupe,
-        UTF-8/GBK tolerant) injected into the Whisper `initial_prompt`
-        (bounded to 400 chars, terminology-only to keep anti-leakage) and into
-        the translation system prompt as a `COURSE GLOSSARY` block
-      - `--glossary` flag on `test_phase3.py` and `overlay.py`; sample file in
-        `glossary.example.txt`
-      - `--slides` PDF context extraction deferred (no slides available yet)
-- [x] **Phase 5: PyQt6 Transparent Overlay UI (this pass)**
-      - `scripts/overlay.py`: frameless, always-on-top, translucent bottom bar;
-        latest English line large with 3 faded lines above; click-through
-        (`WS_EX_TRANSPARENT`, `--clickable` to disable)
-      - Modes: live (default), `--demo` (synthetic, no mic/API), `--text`
-        (one-shot), plus `--glossary`, `--device`, `--duration`, `--screen`
+- [x] **Phase 4: Course Context (lecture PDF primary, manual glossary optional)**
+      - `core/slides.py`: bounded pypdf extraction (per-page fault tolerance,
+        scanned/image-only PDFs reported) → `LECTURE SLIDES` block appended
+        after the optional `COURSE GLOSSARY` block; composed at pipeline start
+        and hot-swapped when a PDF is loaded mid-session
+      - PDF drop zone in `scripts/app.py` (drag-and-drop + browse) and `--slides`
+        preload flag
+      - `core/glossary.py`: optional advanced input — one-term-per-line file
+        (`#` comments, dedupe, UTF-8/GBK tolerant) injected into the Whisper
+        `initial_prompt` (bounded to 400 chars, terminology-only) and into the
+        translation system prompt as a `COURSE GLOSSARY` block; `--glossary`
+        flag on `test_phase3.py` and `app.py`; sample in `glossary.example.txt`
+- [x] **Phase 5: PyQt6 Main Window UI (this pass)**
+      - `scripts/app.py`: normal draggable/closable window — status row (state,
+        mic level, queue depths, drops, avg delay), slides drop zone, card feed
+        (ZH first → EN fills in, per-line delay badge, in-place error badges,
+        200-card cap); explicit Start/Stop (opens idle; `--autostart` opt-in)
+      - Subtitle bar is an optional mode: "Subtitle bar" checkbox (default off,
+        `--overlay` to pre-enable) owns the frameless, always-on-top,
+        click-through bar in `core/overlay_window.py` (`--clickable` to disable)
+      - Modes: live, `--demo` (synthetic, no mic/API), plus `--glossary`,
+        `--slides`, `--device`, `--duration`, `--screen`, `--list-devices`
       - Shared `core/pipeline.py` extraction: `LivePipeline.process_once()` +
-        `on_event` callback drive both the overlay and `test_phase3.py`
-      - Finish-reason/rate-limit observability: `[TRUNCATED]` marker,
-        `rate_limit_errors` / `truncated_translations` summary counters
+        `on_event` callback drive both the app and `test_phase3.py`
+      - Finish-reason/rate-limit observability: in-place card badges +
+        status alerts, `rate_limit_errors` / `truncated_translations` counters
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
 
 Keep this checklist and the matching one in `README.md` in sync whenever a phase
@@ -126,7 +137,9 @@ py tests\test_backpressure.py
 py tests\test_audio_backpressure.py
 py tests\test_error_classification.py
 py tests\test_glossary.py
+py tests\test_slides.py               # PDF extraction + prompt composition
 py tests\test_overlay_ui.py           # opens a window briefly; no mic/API
+py tests\test_app_ui.py               # main window self-check; no mic/API
 ```
 
 Live / API-dependent:
@@ -136,8 +149,8 @@ py scripts\test_phase1.py --list-devices   # mic + VAD only
 py scripts\test_phase2.py --file <wav>     # ASR only
 py scripts\test_phase3.py --benchmark-cases  # translation quality
 py scripts\test_phase3.py --duration 120     # full live pipeline (logs to storage/session_logs/)
-py scripts\overlay.py --demo --duration 15   # overlay UI smoke test (no mic, no API)
-py scripts\overlay.py --duration 120         # overlay live mode (logs to storage/session_logs/)
+py scripts\app.py --demo --duration 15       # main window UI smoke test (no mic, no API)
+py scripts\app.py --autostart --duration 120 # live window mode (logs to storage/session_logs/)
 ```
 
 After a live run, review the JSONL session log for `drop` events, latencies, and
@@ -155,10 +168,12 @@ translation quality — not just the console output.
   overlap or split-at-lowest-probability.
 - **Blacklist word boundaries**: phrase replacement can corrupt legitimate speech
   containing a blacklist word (e.g. `收藏`); consider stricter matching.
-- **Slides mode**: `--slides <pdf>` context extraction for Phase 4 (pypdf already
-  in requirements); deferred until slides are available.
 - **Console loop catch-up**: `test_phase3.py` consumes one 32 ms chunk per
-  iteration (the overlay drains up to four); bounded queue caps worst-case lag.
+  iteration (the main window / subtitle bar drain up to four); bounded queue
+  caps worst-case lag.
+- **Settings screen for API key**: the packaged app will need an in-app
+  Settings → API Key input for users without a `.env` (not needed for personal
+  use).
 
 ## Conventions
 
