@@ -128,6 +128,8 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         "dropped_asr": 0,
         "dropped_trans": 0,
         "empty_transcript": 0,
+        "truncated_trans": 0,
+        "rate_limited": 0,
         "total_asr_latency": 0.0,
         "total_trans_latency": 0.0,
         "total_delay": 0.0
@@ -152,6 +154,12 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         stats["total_delay"] += trans_payload["total_delay"]
         c = stats["trans_count"]
 
+        # Track truncation (finish_reason="length" means max_tokens cut the output)
+        if trans_payload["success"] and trans_payload.get("finish_reason") == "length":
+            stats["truncated_trans"] += 1
+        if not trans_payload["success"] and trans_payload.get("error_type") == "rate_limit":
+            stats["rate_limited"] += 1
+
         session.log("translation", {
             "success": trans_payload["success"],
             "mandarin_transcript": trans_payload["mandarin_transcript"],
@@ -160,7 +168,9 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
             "asr_latency": trans_payload["asr_latency"],
             "total_delay": trans_payload["total_delay"],
             "queue_backlog": trans_payload["queue_backlog"],
-            "error": trans_payload["error"]
+            "finish_reason": trans_payload.get("finish_reason"),
+            "error": trans_payload["error"],
+            "error_type": trans_payload.get("error_type")
         })
 
         with print_lock:
@@ -168,12 +178,14 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
                 en = trans_payload["english_translation"]
                 lat = trans_payload["translation_latency"]
                 tot = trans_payload["total_delay"]
+                trunc = " [TRUNCATED]" if trans_payload.get("finish_reason") == "length" else ""
                 print("\r" + " " * 80 + "\r", end="", flush=True)
-                print(f"     >>> [LIVE EN #{c:02d}] ({lat}s lat | {tot}s total delay)")
+                print(f"     >>> [LIVE EN #{c:02d}] ({lat}s lat | {tot}s total delay){trunc}")
                 print(f"         EN: \"{en}\"\n")
             else:
+                etype = trans_payload.get("error_type") or "error"
                 print("\r" + " " * 80 + "\r", end="", flush=True)
-                print(f"     >>> [TRANSLATION ERROR #{c:02d}]: {trans_payload['error']}\n")
+                print(f"     >>> [TRANSLATION {etype.upper()} #{c:02d}]: {trans_payload['error']}\n")
 
     # Translation worker running in background
     trans_worker = TranslationWorker(engine=trans_engine, on_result=on_translation_done)
@@ -191,8 +203,12 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
             "audio_duration": asr_payload["audio_duration"],
             "total_delay": asr_payload["total_delay"],
             "queue_backlog": asr_payload["queue_backlog"],
-            "error": asr_payload["error"]
+            "error": asr_payload["error"],
+            "error_type": asr_payload.get("error_type")
         })
+
+        if not asr_payload["success"] and asr_payload.get("error_type") == "rate_limit":
+            stats["rate_limited"] += 1
 
         if asr_payload["success"]:
             text = asr_payload["transcript"]
@@ -222,7 +238,8 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         else:
             with print_lock:
                 print("\r" + " " * 80 + "\r", end="", flush=True)
-                print(f" >>> [ASR ERROR #{c:02d}]: {asr_payload['error']}\n")
+                etype = asr_payload.get("error_type") or "error"
+                print(f" >>> [ASR {etype.upper()} #{c:02d}]: {asr_payload['error']}\n")
 
     asr_worker = ASRWorker(engine=asr_engine, on_result=on_asr_done)
     capture = AudioCapture(config.audio)
@@ -307,6 +324,8 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
             "dropped_asr": stats["dropped_asr"],
             "dropped_translation": stats["dropped_trans"],
             "empty_transcripts": stats["empty_transcript"],
+            "truncated_translations": stats["truncated_trans"],
+            "rate_limit_errors": stats["rate_limited"],
             "dropped_audio_frames": capture.dropped_frames,
             "asr_worker_drops": asr_worker.dropped_count,
             "translation_worker_drops": trans_worker.dropped_count,
@@ -330,6 +349,8 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         print(f" Dropped (ASR Q full) : {stats['dropped_asr']}")
         print(f" Dropped (Trans Q full): {stats['dropped_trans']}")
         print(f" Empty Transcripts    : {stats['empty_transcript']}")
+        print(f" Truncated Translates : {stats['truncated_trans']}")
+        print(f" Rate-Limit Errors    : {stats['rate_limited']}")
         print(f" Dropped (Audio Q full): {capture.dropped_frames}")
         print(f" Session Log          : {session_path}")
         print("=" * 60)

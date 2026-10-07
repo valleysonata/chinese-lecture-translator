@@ -1,6 +1,21 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
+
+def classify_error(error: Exception) -> str:
+    """Bucket provider exceptions so session logs distinguish rate limits and timeouts."""
+    message = str(error).lower()
+    if "429" in message or "rate limit" in message or "rate_limit" in message or "tokens per" in message or "tpm" in message:
+        return "rate_limit"
+    if "timeout" in message or "timed out" in message:
+        return "timeout"
+    if "connection" in message or "unreachable" in message:
+        return "connection"
+    if "401" in message or "403" in message or "unauthorized" in message or "invalid api key" in message:
+        return "auth"
+    return "api_error"
+
+
 class ASREngine(ABC):
     """Abstract interface for Speech-to-Text providers (Groq Cloud, Local Whisper, etc.)"""
     @abstractmethod

@@ -90,7 +90,9 @@ class TranslationWorker:
                 "audio_duration": audio_dur,
                 "total_delay": total_delay,
                 "queue_backlog": current_backlog,
-                "error": result.get("error")
+                "finish_reason": result.get("finish_reason"),
+                "error": result.get("error"),
+                "error_type": result.get("error_type")
             }
 
             self.result_queue.put(payload)

@@ -68,6 +68,7 @@ class ASRWorker:
                 "transcript": result.get("transcript", ""),
                 "success": result.get("success", False),
                 "error": result.get("error"),
+                "error_type": result.get("error_type"),
                 "audio_duration": dur,
                 "audio_timestamp": audio_ts,
                 "asr_latency": round(asr_end - asr_start, 3),

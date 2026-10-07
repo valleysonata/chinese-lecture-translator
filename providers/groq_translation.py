@@ -2,7 +2,7 @@ import time
 from typing import Dict, Any, Optional
 from groq import Groq
 
-from providers.base import TranslationEngine
+from providers.base import TranslationEngine, classify_error
 from config import TranslationConfig, DEFAULT_CONFIG
 
 SYSTEM_PROMPT = """You are a strict, real-time simultaneous interpreter for a Computer Science lecture.
@@ -70,13 +70,17 @@ class GroqTranslationEngine(TranslationEngine):
                 max_tokens=self.config.max_tokens
             )
             latency = time.time() - start_time
-            raw_translation = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            raw_translation = choice.message.content or ""
             translation = raw_translation.strip().strip('"').strip("'")
+            finish_reason = getattr(choice, "finish_reason", None)
 
             return {
                 "success": True,
                 "translation": translation,
                 "latency": round(latency, 3),
+                # "stop" = complete, "length" = cut off at max_tokens (truncated)
+                "finish_reason": finish_reason,
                 "error": None
             }
         except Exception as e:
@@ -85,5 +89,7 @@ class GroqTranslationEngine(TranslationEngine):
                 "success": False,
                 "translation": "",
                 "latency": round(latency, 3),
-                "error": str(e)
+                "finish_reason": None,
+                "error": str(e),
+                "error_type": classify_error(e)
             }

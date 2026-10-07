@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, Union
 import numpy as np
 
 from groq import Groq
-from providers.base import ASREngine
+from providers.base import ASREngine, classify_error
 from config import ASRConfig, DEFAULT_CONFIG
 
 class GroqASREngine(ASREngine):
@@ -144,5 +144,6 @@ class GroqASREngine(ASREngine):
                 "latency": round(latency, 3),
                 "duration": 0.0,
                 "segments": [],
-                "error": str(e)
+                "error": str(e),
+                "error_type": classify_error(e)
             }
