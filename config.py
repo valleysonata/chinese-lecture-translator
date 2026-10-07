@@ -1,10 +1,16 @@
 import os
+import sys
 from pathlib import Path
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 # Base Paths
-PROJECT_ROOT = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    # PyInstaller build: resolve next to the executable so .env and storage/
+    # stay external to the bundle (never packaged into the exe)
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent
 STORAGE_DIR = PROJECT_ROOT / "storage"
 AUDIO_CHUNKS_DIR = STORAGE_DIR / "audio_chunks"
 SESSION_LOGS_DIR = STORAGE_DIR / "session_logs"

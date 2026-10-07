@@ -35,6 +35,22 @@ Contributor guidance, repo layout, and commit conventions live in [AGENTS.md](AG
 
 ---
 
+## Build the Windows .exe (optional)
+
+```powershell
+.\build_exe.ps1
+```
+
+Produces `dist\ChineseLectureInterpreter\ChineseLectureInterpreter.exe` — a
+windowed app that launches without Python or a terminal (PyQt6 UI, microphone
+capture, PDF loading, and the ASR/translation dependencies are all bundled).
+
+The API key is **never bundled**: put a `.env` with `GROQ_API_KEY=...` next
+to the exe. Session logs and audio chunks are created in a `storage\` folder
+next to the exe as well.
+
+---
+
 ## How to Test
 
 ### Phase 1: Microphone + Silero VAD Capture

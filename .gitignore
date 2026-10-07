@@ -5,3 +5,5 @@ storage/session_logs/*.jsonl
 .env
 .venv/
 env/
+build/
+dist/

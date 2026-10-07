@@ -28,6 +28,7 @@ LLM translation → English output.
 | `providers/groq_translation.py` | Groq LLM translation engine + `SYSTEM_PROMPT` |
 | `scripts/app.py` | Phase 5 launcher: main window UI (Start/Stop, slides drop, feed, subtitle-bar toggle) |
 | `scripts/` | Live harnesses (`test_phase1/2/3.py`, `app.py` for Phase 5, `verify_automatic_segmentation.py`) |
+| `ChineseLectureInterpreter.spec`, `build_exe.ps1` | Reproducible PyInstaller windowed-exe build; API key stays external (`.env` next to the exe, never bundled) |
 | `tests/` | Offline regression tests (no microphone/API required; `test_overlay_ui.py` / `test_app_ui.py` open a window briefly) |
 | `storage/audio_chunks/` | Saved WAV segments (gitignored) |
 | `storage/session_logs/` | JSONL session logs: transcripts, translations, latencies, drops (gitignored) |
