@@ -19,11 +19,13 @@ LLM translation → English output.
 | `core/asr.py` | `ASRWorker` — background transcription thread (bounded queue) |
 | `core/live_translator.py` | `TranslationWorker` — background translation thread (bounded queue, rolling context) |
 | `core/session_log.py` | `SessionLogger` — thread-safe JSONL event logging for live sessions |
-| `providers/base.py` | `ASREngine`, `TranslationEngine`, `ContextEngine` ABCs |
+| `core/glossary.py` | Phase 4: glossary parsing (`load_glossary`) + prompt injection (`apply_glossary`) |
+| `core/pipeline.py` | `LivePipeline` — shared capture→VAD→ASR→translation orchestration (console script + overlay) |
+| `providers/base.py` | `ASREngine`, `TranslationEngine`, `ContextEngine` ABCs + `classify_error()` |
 | `providers/groq_asr.py` | Groq Whisper engine + `_filter_hallucinations()` |
 | `providers/groq_translation.py` | Groq LLM translation engine + `SYSTEM_PROMPT` |
-| `scripts/` | Per-phase live test harnesses (`test_phase1/2/3.py`, `verify_automatic_segmentation.py`) |
-| `tests/` | Offline regression tests (no microphone required) |
+| `scripts/` | Live harnesses (`test_phase1/2/3.py`, `overlay.py` for Phase 5, `verify_automatic_segmentation.py`) |
+| `tests/` | Offline regression tests (no microphone/API required; `test_overlay_ui.py` opens a window briefly) |
 | `storage/audio_chunks/` | Saved WAV segments (gitignored) |
 | `storage/session_logs/` | JSONL session logs: transcripts, translations, latencies, drops (gitignored) |
 
@@ -49,8 +51,26 @@ LLM translation → English output.
       - Queue drops counted and surfaced (console warning + summary + log)
       - Single print lock so the VU line and worker callbacks can't garble output
       - Offline regression tests: VAD filtering, hallucination filter, backpressure
-- [ ] **Phase 4: Slide Context & Course Glossary Integration**
-- [ ] **Phase 5: PyQt6 Transparent Overlay UI**
+- [x] **Feat 3.1.2: Bounded audio queue** — `AudioCapture` queue capped at ~6.1 s
+      with drop-oldest backpressure; dropped frames counted in summary + session log
+- [x] **Phase 4: Course Glossary Integration (manual `.txt`, this pass)**
+      - `core/glossary.py`: one-term-per-line file (`#` comments, dedupe,
+        UTF-8/GBK tolerant) injected into the Whisper `initial_prompt`
+        (bounded to 400 chars, terminology-only to keep anti-leakage) and into
+        the translation system prompt as a `COURSE GLOSSARY` block
+      - `--glossary` flag on `test_phase3.py` and `overlay.py`; sample file in
+        `glossary.example.txt`
+      - `--slides` PDF context extraction deferred (no slides available yet)
+- [x] **Phase 5: PyQt6 Transparent Overlay UI (this pass)**
+      - `scripts/overlay.py`: frameless, always-on-top, translucent bottom bar;
+        latest English line large with 3 faded lines above; click-through
+        (`WS_EX_TRANSPARENT`, `--clickable` to disable)
+      - Modes: live (default), `--demo` (synthetic, no mic/API), `--text`
+        (one-shot), plus `--glossary`, `--device`, `--duration`, `--screen`
+      - Shared `core/pipeline.py` extraction: `LivePipeline.process_once()` +
+        `on_event` callback drive both the overlay and `test_phase3.py`
+      - Finish-reason/rate-limit observability: `[TRUNCATED]` marker,
+        `rate_limit_errors` / `truncated_translations` summary counters
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
 
 Keep this checklist and the matching one in `README.md` in sync whenever a phase
@@ -103,6 +123,10 @@ Offline (no mic, no API calls) — run these before committing pipeline changes:
 py tests\test_vad.py
 py tests\test_hallucination_filter.py
 py tests\test_backpressure.py
+py tests\test_audio_backpressure.py
+py tests\test_error_classification.py
+py tests\test_glossary.py
+py tests\test_overlay_ui.py           # opens a window briefly; no mic/API
 ```
 
 Live / API-dependent:
@@ -112,6 +136,8 @@ py scripts\test_phase1.py --list-devices   # mic + VAD only
 py scripts\test_phase2.py --file <wav>     # ASR only
 py scripts\test_phase3.py --benchmark-cases  # translation quality
 py scripts\test_phase3.py --duration 120     # full live pipeline (logs to storage/session_logs/)
+py scripts\overlay.py --demo --duration 15   # overlay UI smoke test (no mic, no API)
+py scripts\overlay.py --duration 120         # overlay live mode (logs to storage/session_logs/)
 ```
 
 After a live run, review the JSONL session log for `drop` events, latencies, and
@@ -119,19 +145,20 @@ translation quality — not just the console output.
 
 ## Known Backlog (not yet implemented)
 
-- **Audio queue catch-up**: `AudioCapture.audio_queue` is unbounded and the main
-  loop consumes one 32 ms chunk per iteration; add stale-audio drop policy so lag
-  cannot accumulate during long sessions.
-- **Rate-limit (429) handling**: report and recover from Groq TPM limits explicitly;
-  drops caused by SDK retries should be visible in metrics.
-- **Truncation guard**: check `finish_reason` against `max_tokens=100` so long
-  segments are not silently cut mid-sentence.
+- **Rate-limit backoff**: errors are classified and counted
+  (`rate_limit_errors` in summary + `error_type` in JSONL), but there is no
+  retry/backoff yet; a 429 currently skips that utterance.
+- **Truncation response**: `finish_reason=length` is now visible
+  (`[TRUNCATED]` marker + `truncated_translations`), but the fix — raising
+  `max_tokens=100` or splitting long segments — is not done.
 - **12 s force-split overlap**: mid-sentence splits produce fragments; consider
   overlap or split-at-lowest-probability.
-- **Pipeline extraction**: `scripts/test_phase{1,2,3}.py` duplicate the same loop;
-  extract a shared `core/pipeline.py` before Phase 4/5.
 - **Blacklist word boundaries**: phrase replacement can corrupt legitimate speech
   containing a blacklist word (e.g. `收藏`); consider stricter matching.
+- **Slides mode**: `--slides <pdf>` context extraction for Phase 4 (pypdf already
+  in requirements); deferred until slides are available.
+- **Console loop catch-up**: `test_phase3.py` consumes one 32 ms chunk per
+  iteration (the overlay drains up to four); bounded queue caps worst-case lag.
 
 ## Conventions
 
