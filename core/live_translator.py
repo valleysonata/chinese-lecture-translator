@@ -83,6 +83,7 @@ class TranslationWorker:
 
             payload = {
                 "success": result.get("success", False),
+                "asr_index": asr_payload.get("asr_index"),
                 "mandarin_transcript": transcript,
                 "english_translation": english_text,
                 "translation_latency": trans_lat,
