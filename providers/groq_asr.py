@@ -40,24 +40,36 @@ class GroqASREngine(ASREngine):
             
         return buf.getvalue()
 
-    def _filter_hallucinations(self, text: str, initial_prompt: Optional[str] = None) -> str:
+    @staticmethod
+    def _filter_hallucinations(text: str, initial_prompt: Optional[str] = None) -> str:
         """Filters common Whisper subtitle artifacts and prompt echo."""
-        cleaned = text.strip()
-        if not cleaned or cleaned in {"-", "--", "...", "。", "，", "？", "！"}:
+        filler_chars = set("-—.,，。？！?!…~、")
+
+        cleaned = (text or "").strip()
+        if not cleaned:
             return ""
 
+        # Known Whisper subtitle hallucinations (YouTube/Bilibili outro templates)
         hallucination_phrases = [
             "本集完", "※ 本集完", "本集結束", "請不吝點贊", "謝謝觀看", "謝謝收看",
             "多謝收看", "下集再見", "歡迎訂閱", "請訂閱", "點贊", "投幣", "收藏",
             "感谢您的观看", "感谢收看", "多謝您的收看,下次見!", "多謝您的收看", "下次見"
         ]
         for phrase in hallucination_phrases:
-            cleaned = cleaned.replace(phrase, "").strip()
+            if phrase in cleaned:
+                cleaned = cleaned.replace(phrase, "").strip()
+
+        # Drop punctuation residue left at the edges (e.g. '好，本集完' -> '好')
+        cleaned = cleaned.strip("".join(filler_chars) + " ")
+
+        # Filler output: nothing left, or only punctuation (e.g. '。。。', '--')
+        if not cleaned or all(ch in filler_chars or ch.isspace() for ch in cleaned):
+            return ""
 
         # Check for prompt echo / leakage
         if initial_prompt:
             prompt_core = initial_prompt.strip()
-            # If transcript is an exact copy or substring of the prompt
+            # If transcript is an exact copy or a long fragment of the prompt
             if cleaned == prompt_core or (len(cleaned) >= 15 and cleaned in prompt_core):
                 return ""
 
