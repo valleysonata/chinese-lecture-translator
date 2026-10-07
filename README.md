@@ -2,32 +2,51 @@
 
 A lightweight Windows desktop application designed to help an NYCU CS student follow Mandarin-taught lectures in natural English using course slides as context.
 
-## Current Status: Phase 1 (Microphone + Local Silero VAD)
+---
 
-Phase 1 implements continuous 16 kHz mono microphone capture with local Silero VAD utterance segmentation.
+## Architecture & Progress
 
-### Features in Phase 1
-- **16 kHz Mono Audio Capture**: Low-latency streaming via `sounddevice`.
-- **Local Silero VAD**: Evaluates voice activity in 32ms frames (<1ms CPU overhead).
-- **Utterance Segmentation**:
-  - Pre-speech padding (retains consonant onsets without clipping).
-  - Minimum speech duration check (rejects short clicks/pops).
-  - Silence pause tolerance (800ms natural pause before finalizing an utterance).
-  - Maximum chunk duration cap (12s limit to prevent accumulating latency).
-- **Audio Verification Exporter**: Automatically saves finalized speech segments as 16-bit PCM WAV files in `storage/audio_chunks/`.
+- [x] **Phase 1: Microphone + Local Silero VAD**
+- [x] **Phase 2: Mandarin ASR Engine (Groq Whisper Cloud + Worker)**
+- [ ] **Phase 3: Fast English Translation Layer**
+- [ ] **Phase 4: Slide Context & Course Glossary Integration**
+- [ ] **Phase 5: PyQt6 Transparent Overlay UI**
+- [ ] **Phase 6: Full 60-90 Minute Endurance Test**
 
-### Testing Phase 1
+---
 
-1. **List Audio Input Devices**:
+## Setup & Configuration
+
+1. **Install Dependencies**:
    ```powershell
-   py scripts\test_phase1.py --list-devices
+   py -m pip install -r requirements.txt
    ```
 
-2. **Run Live Microphone + VAD Test**:
-   ```powershell
-   py scripts\test_phase1.py
+2. **Configure API Key (Phase 2+)**:
+   Create a `.env` file in the project root:
+   ```env
+   GROQ_API_KEY=your_groq_api_key_here
    ```
-   *(Or specify a device index: `py scripts\test_phase1.py --device 1`)*
 
-3. **Verify Audio Chunks**:
-   Speak a phrase into your microphone. When you pause for ~0.8s, the completed utterance is displayed and saved to `storage/audio_chunks/`.
+---
+
+## How to Test
+
+### Phase 1: Microphone + Silero VAD Capture
+```powershell
+# List available input devices
+py scripts\test_phase1.py --list-devices
+
+# Test live audio capture and segmentation
+py scripts\test_phase1.py
+```
+*Audio chunks are saved to `storage/audio_chunks/`.*
+
+### Phase 2: Mandarin ASR Pipeline
+```powershell
+# Test ASR directly against a saved audio segment
+py scripts\test_phase2.py --file storage\audio_chunks\segment_001_20261007_215400_1.6s.wav
+
+# Run live Mic -> VAD -> ASR stream
+py scripts\test_phase2.py
+```
