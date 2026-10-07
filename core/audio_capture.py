@@ -13,7 +13,9 @@ class AudioCapture:
     """
     def __init__(self, config: Optional[AudioConfig] = None):
         self.config = config or AudioConfig()
-        self.audio_queue: queue.Queue = queue.Queue()
+        self.max_queue_chunks = 192  # ~6.1 s of 32 ms audio (headroom, prevents runaway lag)
+        self.audio_queue: queue.Queue = queue.Queue(maxsize=self.max_queue_chunks)
+        self.dropped_frames = 0  # Count of audio frames dropped due to queue overflow
         self._stream: Optional[sd.InputStream] = None
         self._is_running = False
 
@@ -22,7 +24,19 @@ class AudioCapture:
             pass  # Overflow or underflow warning if needed
         # Flatten to 1D mono float32 array
         audio_chunk = indata[:, 0].copy().astype(np.float32)
-        self.audio_queue.put(audio_chunk)
+        try:
+            self.audio_queue.put_nowait(audio_chunk)
+        except queue.Full:
+            # Drop oldest frame to make space and count overflow
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.audio_queue.put_nowait(audio_chunk)
+            except queue.Full:
+                # Queue still full after dropping one: drop the new frame
+                self.dropped_frames += 1
 
     def start(self):
         if self._is_running:
@@ -52,6 +66,12 @@ class AudioCapture:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        # Drain any remaining chunks to prevent leaking on restart
+        while True:
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
 
     @property
     def is_running(self) -> bool:

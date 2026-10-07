@@ -307,6 +307,7 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
             "dropped_asr": stats["dropped_asr"],
             "dropped_translation": stats["dropped_trans"],
             "empty_transcripts": stats["empty_transcript"],
+            "dropped_audio_frames": capture.dropped_frames,
             "asr_worker_drops": asr_worker.dropped_count,
             "translation_worker_drops": trans_worker.dropped_count,
             "avg_asr_latency": round(avg_asr, 3),
@@ -329,6 +330,7 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         print(f" Dropped (ASR Q full) : {stats['dropped_asr']}")
         print(f" Dropped (Trans Q full): {stats['dropped_trans']}")
         print(f" Empty Transcripts    : {stats['empty_transcript']}")
+        print(f" Dropped (Audio Q full): {capture.dropped_frames}")
         print(f" Session Log          : {session_path}")
         print("=" * 60)
 
