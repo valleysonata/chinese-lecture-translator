@@ -1,14 +1,14 @@
-# Chinese Lecture Interpreter 
+# Chinese Lecture Interpreter
 
-A lightweight Windows desktop application designed to help STEM student follow Mandarin-taught lectures in natural English using course slides as context.
+A lightweight Windows desktop application designed to help STEM students follow Mandarin-taught lectures in natural English using course slides as context.
 
 ---
 
 ## Architecture & Progress
 
 - [x] **Phase 1: Microphone + Local Silero VAD**
-- [x] **Phase 2: Mandarin ASR Engine (Groq Whisper Cloud + Worker)**
-- [ ] **Phase 3: Fast English Translation Layer**
+- [x] **Phase 2: Mandarin ASR Engine (Groq Whisper + Code-Switching)**
+- [x] **Phase 3: Fast English Live Translation Layer (Groq Qwen/LLM)**
 - [ ] **Phase 4: Slide Context & Course Glossary Integration**
 - [ ] **Phase 5: PyQt6 Transparent Overlay UI**
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
@@ -22,7 +22,7 @@ A lightweight Windows desktop application designed to help STEM student follow M
    py -m pip install -r requirements.txt
    ```
 
-2. **Configure API Key (Phase 2+)**:
+2. **Configure API Key**:
    Create a `.env` file in the project root:
    ```env
    GROQ_API_KEY=your_groq_api_key_here
@@ -49,4 +49,16 @@ py scripts\test_phase2.py --file storage\audio_chunks\segment_001_20261007_21540
 
 # Run live Mic -> VAD -> ASR stream
 py scripts\test_phase2.py
+```
+
+### Phase 3: Fast English Live Translation Pipeline
+```powershell
+# Test translation directly on a text string
+py scripts\test_phase3.py --text "所以我們現在看這個 binary tree，然後如果 balance factor 大於一的話，我們需要做 rotation。"
+
+# Test full ASR + translation on an audio file
+py scripts\test_phase3.py --file storage\audio_chunks\segment_001_20261007_215400_1.6s.wav
+
+# Run continuous live stream: Mic -> VAD -> ASR -> Fast English Translation
+py scripts\test_phase3.py
 ```

@@ -76,8 +76,9 @@ class GroqASREngine(ASREngine):
             "response_format": "verbose_json"
         }
         
-        if prompt:
-            kwargs["prompt"] = prompt
+        effective_prompt = prompt if prompt is not None else getattr(self.config, "initial_prompt", None)
+        if effective_prompt:
+            kwargs["prompt"] = effective_prompt
 
         try:
             response = self.client.audio.transcriptions.create(**kwargs)
