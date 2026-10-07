@@ -45,7 +45,7 @@ def test_overlay_widget():
     print("=" * 60)
 
     app = QApplication.instance() or QApplication([])
-    from scripts.overlay import SubtitleOverlay, BAR_HEIGHT
+    from core.overlay_window import SubtitleOverlay, BAR_HEIGHT
 
     overlay = SubtitleOverlay(screen_index=0, click_through=True)
     overlay.show()
