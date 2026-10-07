@@ -98,7 +98,8 @@ def test_main_window():
     app.processEvents()
 
     # --- normal window chrome -----------------------------------------
-    assert win.windowTitle() == "Chinese Lecture Interpreter"
+    from config import APP_NAME, APP_VERSION
+    assert win.windowTitle() == f"{APP_NAME} v{APP_VERSION}"
     flags = win.windowFlags()
     assert not (flags & Qt.WindowType.FramelessWindowHint), "base UI must be a normal window"
     assert not (flags & Qt.WindowType.WindowStaysOnTopHint), "base UI must not be always-on-top"
@@ -194,13 +195,119 @@ def test_main_window():
     assert not win._overlay.isVisible(), "unchecking should hide the bar"
     print("[OK] overlay is an optional mode: created on check, hidden on uncheck")
 
+    # --- mic picker + Test mic preview (stubbed: no hardware) -------------
+    class _StubMicCapture:
+        """Stand-in for AudioCapture: canned chunks, no device."""
+        dropped_frames = 0
+
+        def __init__(self, config=None):
+            self.config = config
+            self.started = False
+            self.chunks = []
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.started = False
+            self.chunks = []
+
+        def get_chunk(self, timeout=0.1):
+            return self.chunks.pop(0) if self.chunks else None
+
+        @staticmethod
+        def list_input_devices():
+            return [(1, "Stub Mic", 0)]
+
+    class _StubSegmenter:
+        """Stand-in for SileroVADSegmenter: fixed speech probability."""
+        def __init__(self, audio_config=None, vad_config=None):
+            self.audio_config = audio_config
+
+        def process_chunk(self, chunk):
+            return None, 0.42
+
+    import numpy as np
+
+    real_capture = app_mod.AudioCapture
+    real_segmenter = app_mod.SileroVADSegmenter
+    app_mod.AudioCapture = _StubMicCapture
+    app_mod.SileroVADSegmenter = _StubSegmenter
+    try:
+        assert win.device_combo.count() >= 1
+        assert win.device_combo.itemText(0) == "System default"
+        assert win.device_combo.itemData(0) is None
+        assert win.device_index is None, "System default must map to device_index None"
+        print(f"[OK] mic picker populated: {win.device_combo.count()} entries "
+              "(system default + inputs)")
+
+        # Re-populate against the stub list and select the stub device
+        win._populate_devices(prefer=1)
+        assert win.device_combo.count() == 2
+        assert win.device_combo.currentIndex() == 1
+        assert win.device_index == 1, "selecting a device must update device_index"
+        print("[OK] selecting an input device updates device_index (feeds Start)")
+
+        # Test mic: opens the selected device, streams level + VAD preview
+        win.test_btn.setChecked(True)
+        app.processEvents()
+        cap = win._mic_capture
+        assert cap is not None and cap.started, "Test mic did not open the device"
+        assert cap.config.device_index == 1, "preview must use the selected device"
+        assert win._mic_test_timer.isActive(), "preview timer not running"
+        assert win.test_btn.text() == "Stop test"
+        win._refresh_status()
+        assert "MIC TEST" in win.status_label.text()
+        print("[OK] Test mic opens the selected device and shows MIC TEST status")
+
+        # Feed a known-amplitude chunk: rms 0.1 -> level bar 40, VAD readout
+        cap.chunks.append(np.full(512, 0.1, dtype=np.float32))
+        win._mic_test_tick()
+        assert win.level_bar.value() == 40  # 0.1 * 400
+        assert abs(win._mic_test_prob - 0.42) < 1e-6
+        win._refresh_status()
+        assert "vad 0.42" in win.status_label.text()
+        print("[OK] preview tick: level meter tracks rms, VAD prob readout shown")
+
+        # Switching devices reopens the preview on the new device
+        old_cap = win._mic_capture
+        win.device_combo.setCurrentIndex(0)  # back to System default
+        assert win.device_index is None
+        assert win._mic_capture is not old_cap, "device switch must reopen the preview"
+        assert win._mic_capture.config.device_index is None
+        print("[OK] switching devices reopens the preview live")
+
+        # Stop test: device closed, timer off, meter reset
+        win.test_btn.setChecked(False)
+        app.processEvents()
+        assert win._mic_capture is None, "Test mic did not release the device"
+        assert not win._mic_test_timer.isActive()
+        assert win.level_bar.value() == 0
+        assert win.test_btn.text() == "Test mic"
+        print("[OK] stopping the test releases the device and resets the meter")
+    finally:
+        app_mod.AudioCapture = real_capture
+        app_mod.SileroVADSegmenter = real_segmenter
+
     # --- Start/Stop with a stub pipeline ---------------------------------
     original = app_mod.LivePipeline
     app_mod.LivePipeline = _StubPipeline
     try:
+        # A running mic test must be released before the pipeline opens the device
+        app_mod.AudioCapture = _StubMicCapture
+        app_mod.SileroVADSegmenter = _StubSegmenter
+        win._populate_devices(prefer=1)
+        win.test_btn.setChecked(True)
+        assert win._mic_capture is not None
+        app_mod.AudioCapture = real_capture
+        app_mod.SileroVADSegmenter = real_segmenter
+
         win.start_btn.setChecked(True)  # toggled signal -> _start_pipeline
         stub = win.pipeline
         assert stub is not None and stub.started, "Start did not construct/start the pipeline"
+        assert win._mic_capture is None, "Start must stop the mic test first"
+        assert not win.test_btn.isEnabled() and not win.device_combo.isEnabled(), \
+            "mic controls must lock while the pipeline runs"
         assert win.start_btn.text() == "Stop"
         assert win._live_timer.isActive(), "live pump timer not running"
         assert stub.trans_engine.system_prompt is not None
@@ -291,6 +398,8 @@ def test_main_window():
     demo_win.show()
     app.processEvents()
     assert not demo_win.start_btn.isEnabled(), "demo must not open the mic"
+    assert not demo_win.test_btn.isEnabled(), "demo must not offer a mic test"
+    assert not demo_win.device_combo.isEnabled(), "demo must not offer device selection"
     assert demo_win.start_btn.text() == "Demo"
     assert demo_win._demo_timer.isActive()
     assert len(demo_win.cards) >= 1, "demo should seed its first line immediately"

@@ -4,6 +4,8 @@ Chinese Lecture Interpreter — main window application (base UI).
 A normal, draggable, closable desktop window that drives the shared live
 pipeline (mic -> VAD -> ASR -> translation):
 
+  - Mic row: input-device picker + "Test mic" live meter (level + VAD score)
+    so a dead/muted microphone is caught before the lecture starts
   - Status row: state, mic level, queue depths, drops, average delay
   - Slides drop zone: drag-and-drop (or browse) a lecture PDF; its text is
     injected into the translation system prompt as primary context
@@ -28,6 +30,9 @@ import queue
 import signal
 import argparse
 from pathlib import Path
+from dataclasses import replace
+
+import numpy as np
 
 # Ensure root directory is on Python path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -53,7 +58,7 @@ if hasattr(sys.stdout, "reconfigure"):
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QLabel, QPushButton, QCheckBox,
-        QProgressBar, QScrollArea, QFrame, QFileDialog,
+        QComboBox, QProgressBar, QScrollArea, QFrame, QFileDialog,
         QHBoxLayout, QVBoxLayout,
     )
     from PyQt6.QtCore import Qt, QTimer
@@ -64,7 +69,7 @@ except ImportError:
     print("        Console fallback: py scripts\\test_phase3.py --glossary glossary.txt")
     sys.exit(1)
 
-from config import DEFAULT_CONFIG
+from config import DEFAULT_CONFIG, APP_NAME, APP_VERSION
 from core.audio_capture import AudioCapture
 from core.glossary import (
     load_glossary,
@@ -72,6 +77,7 @@ from core.glossary import (
     describe as describe_glossary,
 )
 from core.slides import extract_pdf_text, compose_system_prompt, SlidesError
+from core.vad import SileroVADSegmenter
 from core.pipeline import LivePipeline
 from core.overlay_window import SubtitleOverlay
 from providers.groq_translation import SYSTEM_PROMPT
@@ -113,6 +119,12 @@ QPushButton:hover { background: #30303a; }
 QPushButton:checked { background: #a83a3a; border-color: #c05050; }
 QPushButton:disabled { color: #6a6a73; }
 QCheckBox { color: #c9c9d1; font-size: 13px; }
+QComboBox { background: #26262d; color: #e6e6ea; border: 1px solid #3c3c45;
+            border-radius: 6px; padding: 5px 10px; font-size: 13px; }
+QComboBox:hover { background: #30303a; }
+QComboBox::drop-down { border: none; width: 22px; }
+QComboBox QAbstractItemView { background: #26262d; color: #e6e6ea;
+                              selection-background-color: #3c3c45; }
 QFrame#feedCard { background: #202026; border-radius: 8px; }
 QScrollArea { border: none; }
 QProgressBar { background: #26262d; border: 1px solid #3c3c45; border-radius: 4px;
@@ -223,6 +235,14 @@ class MainWindow(QMainWindow):
         self._shutdown_done = False
         self._anon_keys = 0
 
+        # Mic test mode (preview only: no ASR, no translation, no session log)
+        self._mic_capture: AudioCapture | None = None
+        self._mic_segmenter: SileroVADSegmenter | None = None
+        self._mic_test_prob = 0.0
+        self._mic_test_rms = 0.0
+        self._mic_test_timer = QTimer(self)
+        self._mic_test_timer.timeout.connect(self._mic_test_tick)
+
         self.slides_text: str | None = None
         self.slides_path: str | None = None
         self.slides_info: dict | None = None  # pending session-log entry
@@ -230,7 +250,7 @@ class MainWindow(QMainWindow):
         self.cards: dict = {}          # asr_index -> widget refs
         self.card_order: list = []     # insertion order for the feed cap
 
-        self.setWindowTitle("Chinese Lecture Interpreter")
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.setMinimumSize(560, 380)
         self.resize(900, 660)
 
@@ -262,6 +282,32 @@ class MainWindow(QMainWindow):
         self.overlay_check.toggled.connect(self._toggle_overlay)
         header.addWidget(self.overlay_check)
         layout.addLayout(header)
+
+        # ---------------------------------------------------------------- mic row
+        mic_row = QHBoxLayout()
+        mic_row.setSpacing(8)
+        mic_label = QLabel("Mic")
+        mic_label.setObjectName("statusLabel")
+        self.device_combo = QComboBox()
+        self.device_combo.setMinimumWidth(240)
+        self.device_combo.setToolTip(
+            "Audio input device. Use 'Test mic' to verify it carries your voice."
+        )
+        self._populate_devices(prefer=device_index)
+        self.device_combo.currentIndexChanged.connect(self._on_device_changed)
+
+        self.test_btn = QPushButton("Test mic")
+        self.test_btn.setCheckable(True)
+        self.test_btn.setToolTip(
+            "Open the selected mic without starting the lecture session — "
+            "speak and watch the level meter and VAD score."
+        )
+        self.test_btn.toggled.connect(self._toggle_mic_test)
+
+        mic_row.addWidget(mic_label)
+        mic_row.addWidget(self.device_combo, 1)
+        mic_row.addWidget(self.test_btn)
+        layout.addLayout(mic_row)
 
         # ---------------------------------------------------------------- status
         status_row = QHBoxLayout()
@@ -311,6 +357,8 @@ class MainWindow(QMainWindow):
         if demo:
             self.start_btn.setEnabled(False)
             self.start_btn.setText("Demo")
+            self.test_btn.setEnabled(False)
+            self.device_combo.setEnabled(False)
             self._demo_state = 0
             self._demo_timer = QTimer(self)
             self._demo_timer.timeout.connect(self._demo_step)
@@ -358,6 +406,9 @@ class MainWindow(QMainWindow):
             self._stop_pipeline()
 
     def _start_pipeline(self) -> None:
+        if self._mic_capture is not None:
+            self._stop_mic_test()  # free the device before the pipeline opens it
+            self._set_test_checked(False)
         prompt = compose_system_prompt(self.base_prompt, self.slides_text)
         try:
             self.pipeline = LivePipeline(
@@ -392,6 +443,8 @@ class MainWindow(QMainWindow):
 
         self._last_st = None
         self.start_btn.setText("Stop")
+        self.test_btn.setEnabled(False)
+        self.device_combo.setEnabled(False)
         self._live_timer.start(30)
         self._refresh_status()
 
@@ -404,6 +457,8 @@ class MainWindow(QMainWindow):
             _print_summary(summary, title="APP SUMMARY")
         self._set_start_checked(False)
         self.start_btn.setText("Start" if not self.demo else "Demo")
+        self.test_btn.setEnabled(not self.demo)
+        self.device_combo.setEnabled(not self.demo)
         self._refresh_status()
 
     def _set_start_checked(self, value: bool) -> None:
@@ -411,6 +466,102 @@ class MainWindow(QMainWindow):
             self.start_btn.blockSignals(True)
             self.start_btn.setChecked(value)
             self.start_btn.blockSignals(False)
+
+    # ------------------------------------------------------------------ mic test
+
+    def _populate_devices(self, prefer: int | None = None) -> None:
+        """Fill the mic picker: 'System default' plus every input device."""
+        self.device_combo.clear()
+        self.device_combo.addItem("System default", None)
+        select = 0
+        for idx, name, _hostapi in AudioCapture.list_input_devices():
+            self.device_combo.addItem(f"[{idx}] {name}", idx)
+            if prefer is not None and idx == prefer:
+                select = self.device_combo.count() - 1
+        self.device_combo.setCurrentIndex(select)
+        self.device_index = self.device_combo.currentData()
+
+    def _on_device_changed(self, _index: int) -> None:
+        self.device_index = self.device_combo.currentData()
+        if self._mic_capture is not None:
+            # Live switch: reopen the preview on the newly selected device
+            if not self._open_mic_test():
+                self._set_test_checked(False)
+                self.test_btn.setText("Test mic")
+                self.level_bar.setValue(0)
+
+    def _set_test_checked(self, value: bool) -> None:
+        if self.test_btn.isChecked() != value:
+            self.test_btn.blockSignals(True)
+            self.test_btn.setChecked(value)
+            self.test_btn.blockSignals(False)
+
+    def _toggle_mic_test(self, checked: bool) -> None:
+        if checked:
+            self._start_mic_test()
+        else:
+            self._stop_mic_test()
+
+    def _start_mic_test(self) -> None:
+        if self.pipeline is not None or self.demo:
+            self._set_test_checked(False)
+            return
+        if not self._open_mic_test():
+            self._set_test_checked(False)
+
+    def _open_mic_test(self) -> bool:
+        """Open the selected mic and stream a live level/VAD preview."""
+        self._close_mic_test()
+        audio_cfg = replace(DEFAULT_CONFIG.audio, device_index=self.device_index)
+        try:
+            self._mic_capture = AudioCapture(audio_cfg)
+            self._mic_capture.start()
+            if self._mic_segmenter is None:
+                # Model load is one-time; device does not matter to the segmenter
+                self._mic_segmenter = SileroVADSegmenter(audio_cfg, DEFAULT_CONFIG.vad)
+        except Exception as e:  # bad device, device busy, permissions...
+            self._close_mic_test()
+            detail = str(e) or e.__class__.__name__
+            self._alert(f"mic test failed: {detail}", seconds=8)
+            print(f"[ERROR] Mic test failed: {e}")
+            return False
+        self._mic_test_prob = 0.0
+        self._mic_test_rms = 0.0
+        self._mic_test_timer.start(30)
+        self.test_btn.setText("Stop test")
+        self._refresh_status()
+        return True
+
+    def _close_mic_test(self) -> None:
+        self._mic_test_timer.stop()
+        if self._mic_capture is not None:
+            try:
+                self._mic_capture.stop()
+            except Exception:
+                pass
+            self._mic_capture = None
+
+    def _stop_mic_test(self) -> None:
+        self._close_mic_test()
+        self.test_btn.setText("Test mic")
+        self.level_bar.setValue(0)
+        self._refresh_status()
+
+    def _mic_test_tick(self) -> None:
+        """Drain mic chunks: update the level bar and Silero speech probability."""
+        if self._mic_capture is None:
+            return
+        for _ in range(4):  # keep up with 32 ms chunks
+            chunk = self._mic_capture.get_chunk(timeout=0.0)
+            if chunk is None:
+                break
+            if len(chunk) == 0:
+                continue
+            self._mic_test_rms = float(np.sqrt(np.mean(np.square(chunk))))
+            if self._mic_segmenter is not None:
+                _, prob = self._mic_segmenter.process_chunk(chunk)
+                self._mic_test_prob = prob
+        self.level_bar.setValue(min(100, int(self._mic_test_rms * 400)))
 
     # ------------------------------------------------------------------ event pump
 
@@ -620,6 +771,10 @@ class MainWindow(QMainWindow):
                 + self.pipeline.capture.dropped_frames
             )
             parts.append(f"drops:{drops}")
+        elif self._mic_capture is not None:
+            parts.append("MIC TEST — speak now")
+            parts.append(f"level {self._mic_test_rms:.3f}")
+            parts.append(f"vad {self._mic_test_prob:.2f}")
         else:
             parts.append("STOPPED")
 
@@ -634,7 +789,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(" | ".join(parts))
         if alerting:
             self.status_label.setStyleSheet("color: #ff8d8d; font-weight: 600;")
-        elif self.pipeline is not None:
+        elif self.pipeline is not None or self._mic_capture is not None:
             self.status_label.setStyleSheet("color: #c9c9d1;")
         else:
             self.status_label.setStyleSheet("color: #8a8a93;")
@@ -647,6 +802,7 @@ class MainWindow(QMainWindow):
         self._shutdown_done = True
         self._clock_timer.stop()
         self._live_timer.stop()
+        self._close_mic_test()
         if self._demo_timer is not None:
             self._demo_timer.stop()
         if self.pipeline is not None:
@@ -736,9 +892,10 @@ def main() -> int:
         QTimer.singleShot(duration * 1000, window.close)
 
     print("=" * 60)
-    print("  CHINESE LECTURE INTERPRETER")
+    print(f"  {APP_NAME.upper()} v{APP_VERSION}")
     print("=" * 60)
     print(f" Mode          : {'DEMO (no mic/API)' if args.demo else 'window (press Start or --autostart)'}")
+    print(f" Input device  : {window.device_combo.currentText()}")
     print(f" ASR Model     : {DEFAULT_CONFIG.asr.model} (Mandarin + English Code-switching)")
     print(f" Trans Model   : {DEFAULT_CONFIG.translation.model} (Natural CS English)")
     print(f" Silence Wait  : {DEFAULT_CONFIG.vad.silence_duration_ms} ms (automatic trigger)")

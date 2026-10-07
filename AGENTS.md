@@ -26,7 +26,7 @@ LLM translation → English output.
 | `providers/base.py` | `ASREngine`, `TranslationEngine`, `ContextEngine` ABCs + `classify_error()` |
 | `providers/groq_asr.py` | Groq Whisper engine + `_filter_hallucinations()` |
 | `providers/groq_translation.py` | Groq LLM translation engine + `SYSTEM_PROMPT` |
-| `scripts/app.py` | Phase 5 launcher: main window UI (Start/Stop, slides drop, feed, subtitle-bar toggle) |
+| `scripts/app.py` | Phase 5 launcher: main window UI (mic picker + Test mic meter, Start/Stop, slides drop, feed, subtitle-bar toggle) |
 | `scripts/` | Live harnesses (`test_phase1/2/3.py`, `app.py` for Phase 5, `verify_automatic_segmentation.py`) |
 | `ChineseLectureInterpreter.spec`, `build_exe.ps1` | Reproducible PyInstaller windowed-exe build; API key stays external (`.env` next to the exe, never bundled) |
 | `tests/` | Offline regression tests (no microphone/API required; `test_overlay_ui.py` / `test_app_ui.py` open a window briefly) |
@@ -83,6 +83,15 @@ LLM translation → English output.
         `on_event` callback drive both the app and `test_phase3.py`
       - Finish-reason/rate-limit observability: in-place card badges +
         status alerts, `rate_limit_errors` / `truncated_translations` counters
+- [x] **Feat 5.1: Microphone picker + Test mic meter (this pass)**
+      - Mic row in the main window: input-device dropdown (`System default`
+        + every device from `AudioCapture.list_input_devices()`) feeding
+        `device_index` into the pipeline
+      - "Test mic" opens the selected device preview-only (no ASR, no
+        translation, no session log): live level meter + Silero VAD
+        probability in the status row, so a dead/muted mic is caught before
+        class; device switches reopen the preview live; mic controls lock
+        while the pipeline runs and are disabled in `--demo`
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
 
 Keep this checklist and the matching one in `README.md` in sync whenever a phase

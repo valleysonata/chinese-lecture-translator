@@ -24,6 +24,10 @@ else:
 AUDIO_CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+# App identity (shown in the window title; keep in sync with CHANGELOG.md)
+APP_NAME = "Chinese Lecture Interpreter"
+APP_VERSION = "0.1.0"
+
 @dataclass
 class AudioConfig:
     sample_rate: int = 16000          # 16 kHz standard for Whisper and Silero
