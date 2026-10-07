@@ -29,6 +29,8 @@ def run_test():
     segmenter.speech_start_time = time.time()
     segmenter.current_utterance = [silence_chunk] * 50 # 1.6s of audio
     segmenter.silence_chunks_count = 0
+    segmenter.voice_chunks_count = 50          # all 50 chunks count as voiced speech
+    segmenter.last_voice_chunk_index = 49      # trim anchor for trailing silence
 
     print(f"Initial state: is_speaking={segmenter.is_speaking}, current_chunks={len(segmenter.current_utterance)}")
     print(f"Required silence chunks: {segmenter.required_silence_chunks} ({DEFAULT_CONFIG.vad.silence_duration_ms} ms)")

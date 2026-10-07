@@ -35,12 +35,17 @@ class SileroVADSegmenter:
         self.current_utterance: list[np.ndarray] = []
         self.speech_start_time: float = 0.0
         self.silence_chunks_count: int = 0
-        self.speech_chunks_count: int = 0
+        self.speech_chunks_count: int = 0        # Consecutive speech chunks (onset debounce)
+        self.voice_chunks_count: int = 0         # Total speech-positive chunks in current utterance
+        self.last_voice_chunk_index: int = -1    # Index of last speech-positive chunk (trim anchor)
 
         # Calculations
         self.required_silence_chunks = int((self.vad_config.silence_duration_ms / 1000.0) / self.chunk_duration_s)
         self.min_speech_chunks = int((self.vad_config.min_speech_duration_ms / 1000.0) / self.chunk_duration_s)
         self.max_speech_chunks = int(self.vad_config.max_speech_duration_s / self.chunk_duration_s)
+
+        # Natural audio tail kept after the last voiced chunk before the pause is trimmed
+        self.trailing_pad_chunks: int = 2  # 64 ms
 
     def process_chunk(self, chunk: np.ndarray) -> Tuple[Optional[Dict[str, Any]], float]:
         """
@@ -74,6 +79,8 @@ class SileroVADSegmenter:
                     self.speech_start_time = time.time()
                     self.current_utterance = list(self.pre_buffer)
                     self.silence_chunks_count = 0
+                    self.voice_chunks_count = self.speech_chunks_count
+                    self.last_voice_chunk_index = len(self.current_utterance) - 1
             else:
                 self.speech_chunks_count = 0
         else:
@@ -81,6 +88,8 @@ class SileroVADSegmenter:
 
             if is_speech:
                 self.silence_chunks_count = 0
+                self.voice_chunks_count += 1
+                self.last_voice_chunk_index = len(self.current_utterance) - 1
             else:
                 self.silence_chunks_count += 1
 
@@ -91,15 +100,28 @@ class SileroVADSegmenter:
             reached_max = total_chunks >= self.max_speech_chunks
 
             if reached_silence or reached_max:
-                duration_s = total_chunks * self.chunk_duration_s
-                
-                # Check if it meets minimum speech length
-                if total_chunks >= self.min_speech_chunks:
-                    audio_data = np.concatenate(self.current_utterance)
+                # Enforce min duration on ACTUAL speech chunks only.
+                # Pre-speech padding and the trailing pause are not speech, so a short
+                # click/noise burst can never pass the filter just by being buffered.
+                meets_min_speech = self.voice_chunks_count >= self.min_speech_chunks
+
+                # Trim the trailing pause so ASR never receives the full silence tail
+                # (long silent tails are a known source of Whisper hallucinations).
+                trimmed_chunks = total_chunks
+                if self.last_voice_chunk_index >= 0:
+                    trimmed_chunks = min(
+                        total_chunks,
+                        self.last_voice_chunk_index + 1 + self.trailing_pad_chunks,
+                    )
+
+                if meets_min_speech and trimmed_chunks > 0:
+                    audio_data = np.concatenate(self.current_utterance[:trimmed_chunks])
+                    duration_s = trimmed_chunks * self.chunk_duration_s
                     completed_utterance = {
                         "audio": audio_data,
                         "sample_rate": self.sample_rate,
                         "duration": duration_s,
+                        "speech_duration": round(self.voice_chunks_count * self.chunk_duration_s, 3),
                         "timestamp": self.speech_start_time,
                         "reason": "silence" if reached_silence else "max_duration"
                     }
@@ -109,6 +131,8 @@ class SileroVADSegmenter:
                 self.current_utterance = []
                 self.speech_chunks_count = 0
                 self.silence_chunks_count = 0
+                self.voice_chunks_count = 0
+                self.last_voice_chunk_index = -1
                 self.pre_buffer.clear()
 
         return completed_utterance, prob
