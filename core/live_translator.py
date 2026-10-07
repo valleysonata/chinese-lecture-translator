@@ -25,6 +25,7 @@ class TranslationWorker:
         self.on_result = on_result
         self.queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
         self.result_queue: queue.Queue = queue.Queue()
+        self.dropped_count = 0  # Transcripts rejected because the queue was saturated
         self._is_running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -50,6 +51,7 @@ class TranslationWorker:
             self.queue.put_nowait(asr_payload)
             return True
         except queue.Full:
+            self.dropped_count += 1
             return False
 
     def _run_loop(self):

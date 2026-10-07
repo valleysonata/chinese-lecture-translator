@@ -22,6 +22,7 @@ class ASRWorker:
         self.on_result = on_result
         self.queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
         self.result_queue: queue.Queue = queue.Queue()
+        self.dropped_count = 0  # Utterances rejected because the queue was saturated
         self._is_running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -41,7 +42,8 @@ class ASRWorker:
             self.queue.put_nowait(utterance)
             return True
         except queue.Full:
-            # Latency protection: warn if system is falling behind
+            # Latency protection: utterance dropped, counted for the session summary
+            self.dropped_count += 1
             return False
 
     def _run_loop(self):

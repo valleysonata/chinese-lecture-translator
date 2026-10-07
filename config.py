@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent
 STORAGE_DIR = PROJECT_ROOT / "storage"
 AUDIO_CHUNKS_DIR = STORAGE_DIR / "audio_chunks"
+SESSION_LOGS_DIR = STORAGE_DIR / "session_logs"
 ENV_FILE = PROJECT_ROOT / ".env"
 
 if ENV_FILE.exists():
@@ -15,6 +16,7 @@ else:
     load_dotenv()
 
 AUDIO_CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 @dataclass
 class AudioConfig:

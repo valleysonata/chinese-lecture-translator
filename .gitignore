@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 storage/audio_chunks/*.wav
+storage/session_logs/*.jsonl
 .env
 .venv/
 env/

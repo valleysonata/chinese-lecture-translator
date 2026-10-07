@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import argparse
+import threading
 from datetime import datetime
 from pathlib import Path
 import numpy as np
@@ -27,11 +28,12 @@ def disable_quickedit():
         except Exception:
             pass
 
-from config import DEFAULT_CONFIG, AUDIO_CHUNKS_DIR
+from config import DEFAULT_CONFIG, AUDIO_CHUNKS_DIR, SESSION_LOGS_DIR
 from core.audio_capture import AudioCapture
 from core.vad import SileroVADSegmenter
 from core.asr import ASRWorker
 from core.live_translator import TranslationWorker
+from core.session_log import SessionLogger
 from providers.groq_asr import GroqASREngine
 from providers.groq_translation import GroqTranslationEngine
 
@@ -123,10 +125,25 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         "utt_count": 0,
         "asr_count": 0,
         "trans_count": 0,
+        "dropped_asr": 0,
+        "dropped_trans": 0,
+        "empty_transcript": 0,
         "total_asr_latency": 0.0,
         "total_trans_latency": 0.0,
         "total_delay": 0.0
     }
+
+    # One lock for every console write: the main VU line and the worker callbacks
+    # all emit multi-line/overwrite sequences, so writes must stay atomic.
+    print_lock = threading.Lock()
+
+    session_path = SESSION_LOGS_DIR / f"phase3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    session = SessionLogger(session_path)
+    session.log("session_start", {
+        "asr_model": config.asr.model,
+        "trans_model": config.translation.model,
+        "silence_ms": config.vad.silence_duration_ms
+    })
 
     # Asynchronous translation callback: prints English as soon as LLM responds
     def on_translation_done(trans_payload: dict):
@@ -135,16 +152,28 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         stats["total_delay"] += trans_payload["total_delay"]
         c = stats["trans_count"]
 
-        if trans_payload["success"]:
-            en = trans_payload["english_translation"]
-            lat = trans_payload["translation_latency"]
-            tot = trans_payload["total_delay"]
-            print(f"\r" + " " * 80 + "\r", end="", flush=True)
-            print(f"     >>> [LIVE EN #{c:02d}] ({lat}s lat | {tot}s total delay)")
-            print(f"         EN: \"{en}\"\n")
-        else:
-            print(f"\r" + " " * 80 + "\r", end="", flush=True)
-            print(f"     >>> [TRANSLATION ERROR #{c:02d}]: {trans_payload['error']}\n")
+        session.log("translation", {
+            "success": trans_payload["success"],
+            "mandarin_transcript": trans_payload["mandarin_transcript"],
+            "english_translation": trans_payload["english_translation"],
+            "translation_latency": trans_payload["translation_latency"],
+            "asr_latency": trans_payload["asr_latency"],
+            "total_delay": trans_payload["total_delay"],
+            "queue_backlog": trans_payload["queue_backlog"],
+            "error": trans_payload["error"]
+        })
+
+        with print_lock:
+            if trans_payload["success"]:
+                en = trans_payload["english_translation"]
+                lat = trans_payload["translation_latency"]
+                tot = trans_payload["total_delay"]
+                print("\r" + " " * 80 + "\r", end="", flush=True)
+                print(f"     >>> [LIVE EN #{c:02d}] ({lat}s lat | {tot}s total delay)")
+                print(f"         EN: \"{en}\"\n")
+            else:
+                print("\r" + " " * 80 + "\r", end="", flush=True)
+                print(f"     >>> [TRANSLATION ERROR #{c:02d}]: {trans_payload['error']}\n")
 
     # Translation worker running in background
     trans_worker = TranslationWorker(engine=trans_engine, on_result=on_translation_done)
@@ -155,19 +184,45 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         stats["total_asr_latency"] += asr_payload["asr_latency"]
         c = stats["asr_count"]
 
+        session.log("asr", {
+            "success": asr_payload["success"],
+            "transcript": asr_payload["transcript"],
+            "asr_latency": asr_payload["asr_latency"],
+            "audio_duration": asr_payload["audio_duration"],
+            "total_delay": asr_payload["total_delay"],
+            "queue_backlog": asr_payload["queue_backlog"],
+            "error": asr_payload["error"]
+        })
+
         if asr_payload["success"]:
             text = asr_payload["transcript"]
             lat = asr_payload["asr_latency"]
             dur = asr_payload["audio_duration"]
-            print(f"\r" + " " * 80 + "\r", end="", flush=True)
-            print(f" >>> [ASR #{c:02d}] ({lat}s lat | {dur:.1f}s speech)")
-            print(f"     ZH: {text}")
+            with print_lock:
+                print("\r" + " " * 80 + "\r", end="", flush=True)
+                print(f" >>> [ASR #{c:02d}] ({lat}s lat | {dur:.1f}s speech)")
+                print(f"     ZH: {text}")
+
+            if not text.strip():
+                # Hallucination filter emptied the transcript: skip translation, but record it.
+                stats["empty_transcript"] += 1
+                session.log("drop", {"stage": "translation", "reason": "empty_transcript"})
+                return
 
             # Non-blocking dispatch to translation worker (independent pipeline)
-            trans_worker.submit_transcript(asr_payload)
+            if not trans_worker.submit_transcript(asr_payload):
+                stats["dropped_trans"] += 1
+                session.log("drop", {
+                    "stage": "translation",
+                    "reason": "queue_full",
+                    "transcript": text
+                })
+                with print_lock:
+                    print(f"     [WARN] Translation queue full - dropped ASR #{c:02d}\n")
         else:
-            print(f"\r" + " " * 80 + "\r", end="", flush=True)
-            print(f" >>> [ASR ERROR #{c:02d}]: {asr_payload['error']}\n")
+            with print_lock:
+                print("\r" + " " * 80 + "\r", end="", flush=True)
+                print(f" >>> [ASR ERROR #{c:02d}]: {asr_payload['error']}\n")
 
     asr_worker = ASRWorker(engine=asr_engine, on_result=on_asr_done)
     capture = AudioCapture(config.audio)
@@ -196,26 +251,36 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
                 asr_q = asr_worker.queue.qsize()
                 trans_q = trans_worker.queue.qsize()
 
-                print(
-                    f"\r[{status:9s}] Vol: {bar} | VAD: {prob:0.2f} [{prob_bar}] | ASR Q:{asr_q} Trans Q:{trans_q} ",
-                    end="",
-                    flush=True
-                )
+                with print_lock:
+                    print(
+                        f"\r[{status:9s}] Vol: {bar} | VAD: {prob:0.2f} [{prob_bar}] | ASR Q:{asr_q} Trans Q:{trans_q} ",
+                        end="",
+                        flush=True
+                    )
 
                 if utterance is not None:
                     stats["utt_count"] += 1
                     u_count = stats["utt_count"]
                     dur = utterance["duration"]
-                    print(f"\r" + " " * 80 + "\r", end="", flush=True)
-                    print(f"--- [VAD AUTO-FINALIZED #{u_count:02d}] Speech: {dur:.1f}s -> Submitting to ASR...")
+                    with print_lock:
+                        print("\r" + " " * 80 + "\r", end="", flush=True)
+                        print(f"--- [VAD AUTO-FINALIZED #{u_count:02d}] Speech: {dur:.1f}s -> Submitting to ASR...")
 
                     # Save local copy for debugging
                     ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                     out_path = AUDIO_CHUNKS_DIR / f"phase3_seg_{u_count:03d}_{ts_str}.wav"
                     segmenter.save_to_wav(utterance["audio"], out_path, config.audio.sample_rate)
 
-                    # Non-blocking dispatch to ASR
-                    asr_worker.submit_utterance(utterance)
+                    # Non-blocking dispatch to ASR (drops are counted, never silent)
+                    if not asr_worker.submit_utterance(utterance):
+                        stats["dropped_asr"] += 1
+                        session.log("drop", {
+                            "stage": "asr",
+                            "reason": "queue_full",
+                            "audio_duration": dur
+                        })
+                        with print_lock:
+                            print(f"[WARN] ASR queue full - dropped utterance #{u_count:02d}")
 
             if duration and (time.time() - start_time) >= duration:
                 print(f"\nAuto-stopping after {duration}s limit.")
@@ -234,6 +299,23 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         avg_trans = (stats["total_trans_latency"] / tc) if tc > 0 else 0.0
         avg_delay = (stats["total_delay"] / tc) if tc > 0 else 0.0
 
+        summary = {
+            "runtime_s": round(elapsed, 1),
+            "utterances": stats["utt_count"],
+            "transcripts": ac,
+            "translations": tc,
+            "dropped_asr": stats["dropped_asr"],
+            "dropped_translation": stats["dropped_trans"],
+            "empty_transcripts": stats["empty_transcript"],
+            "asr_worker_drops": asr_worker.dropped_count,
+            "translation_worker_drops": trans_worker.dropped_count,
+            "avg_asr_latency": round(avg_asr, 3),
+            "avg_translation_latency": round(avg_trans, 3),
+            "avg_total_delay": round(avg_delay, 3)
+        }
+        session.log("session_end", summary)
+        session.close()
+
         print("\n" + "=" * 60)
         print(" PHASE 3 SUMMARY")
         print("=" * 60)
@@ -244,6 +326,10 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         print(f" Avg ASR Latency      : {avg_asr:.2f} s")
         print(f" Avg Trans Latency    : {avg_trans:.2f} s")
         print(f" Avg Total Lag Behind : {avg_delay:.2f} s")
+        print(f" Dropped (ASR Q full) : {stats['dropped_asr']}")
+        print(f" Dropped (Trans Q full): {stats['dropped_trans']}")
+        print(f" Empty Transcripts    : {stats['empty_transcript']}")
+        print(f" Session Log          : {session_path}")
         print("=" * 60)
 
 def test_benchmark_cases():
