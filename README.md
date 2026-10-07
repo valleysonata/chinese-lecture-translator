@@ -1,6 +1,6 @@
-# CS Lecture Interpreter for NYCU
+# Chinese Lecture Interpreter 
 
-A lightweight Windows desktop application designed to help an NYCU CS student follow Mandarin-taught lectures in natural English using course slides as context.
+A lightweight Windows desktop application designed to help STEM student follow Mandarin-taught lectures in natural English using course slides as context.
 
 ---
 
