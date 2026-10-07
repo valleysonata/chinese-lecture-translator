@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+storage/audio_chunks/*.wav
+.env
+.venv/
+env/
