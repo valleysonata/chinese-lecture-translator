@@ -9,8 +9,8 @@ A lightweight Windows desktop application designed to help STEM students follow 
 - [x] **Phase 1: Microphone + Local Silero VAD**
 - [x] **Phase 2: Mandarin ASR Engine (Groq Whisper + Code-Switching)**
 - [x] **Phase 3: Fast English Live Translation Layer (Groq Qwen/LLM)**
-- [x] **Feat 3.1: Anti-Hallucination & Conservative Meaning Translation**
-- [x] **Feat 3.1.1: Pipeline Hardening (VAD speech filtering, session logs, drop metrics)**
+- [x] **Phase 3.1: Anti-Hallucination & Conservative Meaning Translation**
+- [x] **Phase 3.1.1: Pipeline Hardening (VAD speech filtering, session logs, drop metrics)**
 - [ ] **Phase 4: Slide Context & Course Glossary Integration**
 - [ ] **Phase 5: PyQt6 Transparent Overlay UI**
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
