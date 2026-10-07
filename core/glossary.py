@@ -102,3 +102,15 @@ def describe(terms: List[str], sample: int = 5) -> str:
     if len(terms) > sample:
         preview += f", ... (+{len(terms) - sample} more)"
     return f"Glossary    : {len(terms)} terms loaded -> {preview}"
+
+
+def apply_glossary(asr_config, terms: List[str], base_system_prompt: str) -> Optional[str]:
+    """
+    Phase 4 injection shared by all entry points (console script, overlay).
+    Mutates the ASR config's initial_prompt in place (call once per process)
+    and returns the translation system-prompt override, or None if no terms.
+    """
+    if not terms:
+        return None
+    asr_config.initial_prompt = build_asr_prompt(asr_config.initial_prompt, terms)
+    return build_translation_prompt(base_system_prompt, terms)
