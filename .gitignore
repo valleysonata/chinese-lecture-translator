@@ -7,3 +7,4 @@ storage/session_logs/*.jsonl
 env/
 build/
 dist/
+releases/

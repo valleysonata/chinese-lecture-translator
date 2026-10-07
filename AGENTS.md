@@ -29,7 +29,9 @@ LLM translation → English output.
 | `scripts/app.py` | Phase 5 launcher: main window UI (mic picker + Test mic meter, Start/Stop, slides drop, feed, subtitle-bar toggle) |
 | `scripts/` | Live harnesses (`test_phase1/2/3.py`, `app.py` for Phase 5, `verify_automatic_segmentation.py`) |
 | `ChineseLectureInterpreter.spec`, `build_exe.ps1` | Reproducible PyInstaller windowed-exe build; API key stays external (`.env` next to the exe, never bundled) |
+| `package_release.ps1` | Packages `dist\` into `releases\ChineseLectureInterpreter-v<version>-Windows-x64.zip` (exe + `.env.example`, no `.env`) |
 | `.env.example` | Template for the required `GROQ_API_KEY` config (the real `.env` is gitignored) |
+| `CHANGELOG.md` | User-facing release notes per version |
 | `tests/` | Offline regression tests (no microphone/API required; `test_overlay_ui.py` / `test_app_ui.py` open a window briefly) |
 | `storage/audio_chunks/` | Saved WAV segments (gitignored) |
 | `storage/session_logs/` | JSONL session logs: transcripts, translations, latencies, drops (gitignored) |
@@ -101,6 +103,13 @@ py scripts\app.py                # main window
         probability in the status row, so a dead/muted mic is caught before
         class; device switches reopen the preview live; mic controls lock
         while the pipeline runs and are disabled in `--demo`
+- [x] **v0.1.0 public beta packaging (this pass)**
+      - `.env.example` template, `CHANGELOG.md`, version constant
+        (`config.APP_VERSION`, shown in window title + banner)
+      - `package_release.ps1` → `releases\ChineseLectureInterpreter-v0.1.0-Windows-x64.zip`
+        (exe + `_internal` + `.env.example`; personal `.env` excluded)
+      - README rewritten as a user quick start (install → API key → open →
+        drop PDF → Start); progress/testing detail consolidated in this file
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
 
 This file carries the single source of truth for progress; `README.md` holds
@@ -175,6 +184,16 @@ py scripts\app.py --autostart --duration 120 # live window mode (logs to storage
 
 After a live run, review the JSONL session log for `drop` events, latencies, and
 translation quality — not just the console output.
+
+Release (packaging):
+
+```powershell
+.\build_exe.ps1          # build dist\ChineseLectureInterpreter\ (excludes .env)
+.\package_release.ps1    # zip dist\ → releases\ChineseLectureInterpreter-v<version>-Windows-x64.zip
+```
+
+The release zip must never contain `.env` — only `.env.example`. Verify with
+`py -m zipfile -l releases\<zip>` before publishing.
 
 ## Known Backlog (not yet implemented)
 
