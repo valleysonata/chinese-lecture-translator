@@ -34,14 +34,34 @@ from core.vad import SileroVADSegmenter
 from core.asr import ASRWorker
 from core.live_translator import TranslationWorker
 from core.session_log import SessionLogger
+from core.glossary import (
+    load_glossary,
+    build_asr_prompt,
+    build_translation_prompt,
+    describe as describe_glossary,
+)
 from providers.groq_asr import GroqASREngine
-from providers.groq_translation import GroqTranslationEngine
+from providers.groq_translation import GroqTranslationEngine, SYSTEM_PROMPT
+
+
+def apply_glossary(terms: list) -> str | None:
+    """
+    Phase 4: inject glossary terms into both prompts.
+    Mutates the shared ASR config prompt (once per process) and returns the
+    translation system prompt override (None when no glossary is loaded).
+    """
+    if not terms:
+        return None
+    DEFAULT_CONFIG.asr.initial_prompt = build_asr_prompt(
+        DEFAULT_CONFIG.asr.initial_prompt, terms
+    )
+    return build_translation_prompt(SYSTEM_PROMPT, terms)
 
 def format_vu(level: float, length: int = 15) -> str:
     filled = int(min(1.0, level * 5) * length)
     return "#" * filled + "-" * (length - filled)
 
-def test_text_mode(text: str):
+def test_text_mode(text: str, system_prompt: str | None = None):
     """Test translation layer directly on a text string."""
     print("=" * 60)
     print("  PHASE 3: Direct Text Translation Test")
@@ -50,7 +70,7 @@ def test_text_mode(text: str):
     print(" Submitting to Translation Engine...")
 
     try:
-        engine = GroqTranslationEngine()
+        engine = GroqTranslationEngine(system_prompt=system_prompt)
         res = engine.translate(text)
     except Exception as e:
         print(f"[ERROR]: {e}")
@@ -64,7 +84,7 @@ def test_text_mode(text: str):
     else:
         print(f"\n[FAILED]: {res['error']}")
 
-def test_file_mode(file_path: Path):
+def test_file_mode(file_path: Path, system_prompt: str | None = None):
     """Test ASR + Translation on an audio file."""
     print("=" * 60)
     print(f"  PHASE 3: Audio File Pipeline Test: {file_path.name}")
@@ -72,7 +92,7 @@ def test_file_mode(file_path: Path):
 
     try:
         asr_engine = GroqASREngine()
-        trans_engine = GroqTranslationEngine()
+        trans_engine = GroqTranslationEngine(system_prompt=system_prompt)
     except Exception as e:
         print(f"[ERROR]: {e}")
         return
@@ -94,7 +114,12 @@ def test_file_mode(file_path: Path):
         print(f" >>> [TRANSLATION FAILED]: {trans_res['error']}")
     print("=" * 60)
 
-def live_pipeline_mode(device_index: int | None = None, duration: int | None = None):
+def live_pipeline_mode(
+    device_index: int | None = None,
+    duration: int | None = None,
+    system_prompt: str | None = None,
+    glossary_terms: list | None = None
+):
     """Continuous Live Pipeline: Mic -> VAD -> ASR -> Fast English Translation"""
     disable_quickedit()
 
@@ -104,7 +129,7 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
 
     try:
         asr_engine = GroqASREngine()
-        trans_engine = GroqTranslationEngine()
+        trans_engine = GroqTranslationEngine(system_prompt=system_prompt)
     except ValueError as e:
         print(f"\n[ERROR] {e}")
         print("Please configure GROQ_API_KEY in .env before running Phase 3.")
@@ -117,6 +142,7 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
     print(f" ASR Model   : {config.asr.model} (Mandarin + English Code-switching)")
     print(f" Trans Model : {config.translation.model} (Natural CS English)")
     print(f" Silence Wait: {config.vad.silence_duration_ms} ms (automatic trigger)")
+    print(describe_glossary(glossary_terms or []))
     print("=" * 60)
     print("Speak in Mandarin or mixed Chinese/English, then pause naturally (~0.8s).")
     print("Live English will follow immediately. Press Ctrl+C to stop.\n")
@@ -144,7 +170,8 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
     session.log("session_start", {
         "asr_model": config.asr.model,
         "trans_model": config.translation.model,
-        "silence_ms": config.vad.silence_duration_ms
+        "silence_ms": config.vad.silence_duration_ms,
+        "glossary_terms": len(glossary_terms or [])
     })
 
     # Asynchronous translation callback: prints English as soon as LLM responds
@@ -355,7 +382,7 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         print(f" Session Log          : {session_path}")
         print("=" * 60)
 
-def test_benchmark_cases():
+def test_benchmark_cases(system_prompt: str | None = None):
     """Run benchmark testing across Pure English, Pure Mandarin, and Mixed Code-Switching."""
     print("=" * 65)
     print("  PHASE 3.1: Benchmark Translation Quality & Conservatism")
@@ -371,7 +398,7 @@ def test_benchmark_cases():
     ]
 
     try:
-        engine = GroqTranslationEngine()
+        engine = GroqTranslationEngine(system_prompt=system_prompt)
     except Exception as e:
         print(f"[ERROR]: {e}")
         return
@@ -393,16 +420,33 @@ def main():
     parser.add_argument("--benchmark-cases", action="store_true", help="Run benchmark across Pure English, Mandarin, and Mixed cases")
     parser.add_argument("--device", type=int, default=None, help="Audio input device index")
     parser.add_argument("--duration", type=int, default=None, help="Auto stop after N seconds")
+    parser.add_argument("--glossary", type=str, default=None, help="Path to glossary .txt (one term per line) injected into ASR + translation prompts")
     args = parser.parse_args()
 
+    # Phase 4: load glossary and inject into prompts before engines are built
+    terms: list = []
+    if args.glossary:
+        try:
+            terms = load_glossary(args.glossary)
+        except (FileNotFoundError, UnicodeDecodeError) as e:
+            print(f"[ERROR] {e}")
+            return
+        print(describe_glossary(terms))
+    system_prompt = apply_glossary(terms)
+
     if args.benchmark_cases:
-        test_benchmark_cases()
+        test_benchmark_cases(system_prompt)
     elif args.text:
-        test_text_mode(args.text)
+        test_text_mode(args.text, system_prompt)
     elif args.file:
-        test_file_mode(Path(args.file))
+        test_file_mode(Path(args.file), system_prompt)
     else:
-        live_pipeline_mode(device_index=args.device, duration=args.duration)
+        live_pipeline_mode(
+            device_index=args.device,
+            duration=args.duration,
+            system_prompt=system_prompt,
+            glossary_terms=terms
+        )
 
 if __name__ == "__main__":
     main()

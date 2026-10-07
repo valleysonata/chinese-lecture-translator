@@ -25,9 +25,15 @@ class GroqTranslationEngine(TranslationEngine):
     Fast English translation using Groq high-speed LLM (Qwen/GPT-OSS).
     Produces low-latency idiomatic English translations preserving CS terminology.
     """
-    def __init__(self, api_key: Optional[str] = None, config: Optional[TranslationConfig] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        config: Optional[TranslationConfig] = None,
+        system_prompt: Optional[str] = None
+    ):
         self.config = config or DEFAULT_CONFIG.translation
         self.api_key = api_key or DEFAULT_CONFIG.groq_api_key
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
 
         if not self.api_key:
             raise ValueError(
@@ -53,7 +59,7 @@ class GroqTranslationEngine(TranslationEngine):
         start_time = time.time()
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}
+            {"role": "system", "content": self.system_prompt}
         ]
 
         user_content = f"Transcript to translate: {clean_text}"

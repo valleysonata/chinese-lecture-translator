@@ -1,0 +1,30 @@
+# Course glossary — one term per line. Lines starting with # are ignored.
+# Usage: py scripts\test_phase3.py --glossary glossary.example.txt
+# Copy/edit this file for tomorrow's lecture topic.
+
+# Trees & balancing
+binary tree
+AVL tree
+balance factor
+node
+right rotation
+left rotation
+subtree
+root node
+leaf node
+
+# Algorithms & complexity
+recursion
+algorithm
+time complexity
+space complexity
+worst case
+traversal
+in-order traversal
+
+# General CS terms used in Mandarin lectures
+pointer
+array
+stack
+queue
+hash table
