@@ -29,9 +29,18 @@ LLM translation → English output.
 | `scripts/app.py` | Phase 5 launcher: main window UI (mic picker + Test mic meter, Start/Stop, slides drop, feed, subtitle-bar toggle) |
 | `scripts/` | Live harnesses (`test_phase1/2/3.py`, `app.py` for Phase 5, `verify_automatic_segmentation.py`) |
 | `ChineseLectureInterpreter.spec`, `build_exe.ps1` | Reproducible PyInstaller windowed-exe build; API key stays external (`.env` next to the exe, never bundled) |
+| `.env.example` | Template for the required `GROQ_API_KEY` config (the real `.env` is gitignored) |
 | `tests/` | Offline regression tests (no microphone/API required; `test_overlay_ui.py` / `test_app_ui.py` open a window briefly) |
 | `storage/audio_chunks/` | Saved WAV segments (gitignored) |
 | `storage/session_logs/` | JSONL session logs: transcripts, translations, latencies, drops (gitignored) |
+
+## Setup (source runs)
+
+```powershell
+py -m pip install -r requirements.txt
+Copy-Item .env.example .env      # then paste your Groq key (console.groq.com/keys)
+py scripts\app.py                # main window
+```
 
 ## Current Progress
 
@@ -94,8 +103,9 @@ LLM translation → English output.
         while the pipeline runs and are disabled in `--demo`
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
 
-Keep this checklist and the matching one in `README.md` in sync whenever a phase
-lands.
+This file carries the single source of truth for progress; `README.md` holds
+user-facing quick-start docs only. Update this checklist whenever a phase or
+release lands (and the README only when user-visible workflow changes).
 
 ## Commit Conventions
 
@@ -122,9 +132,9 @@ Rules:
 1. Lowercase summary after the colon, imperative mood, **no trailing period**.
 2. One concern per commit — do not mix a `fix:` with unrelated `feat:` changes.
 3. Body may use `-` bullets for detail when the change isn't self-explanatory.
-4. Any change that shifts project status must update **both** `README.md` and
-   this file's progress checklist in the same commit (usually a `docs:` or the
-   feature commit itself).
+4. Any change that shifts project status must update this file's progress
+   checklist in the same commit; update `README.md` too when the change is
+   user-visible (workflow, install, troubleshooting).
 
 Examples:
 
