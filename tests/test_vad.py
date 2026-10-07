@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 import numpy as np
 import wave
@@ -75,7 +76,90 @@ def test_vad_pipeline():
     else:
         print("Note: Synthetic tones had low speech probability on Silero VAD (expected for non-natural speech). Testing with real model properties.")
 
-    print("\nAll VAD pipeline unit tests completed successfully!")
+    print("[OK] Basic VAD pipeline test completed")
+
+
+def test_min_speech_duration_filter():
+    """
+    Phase 3.1 regression: min_speech_duration_ms must be enforced on ACTUAL
+    voiced chunks only. A short click/burst must be rejected even though the
+    300ms pre-buffer + 800ms trailing silence make the buffered audio long
+    (the old total-chunk check always passed, feeding silence to Whisper).
+    """
+    print("\nTesting min-speech-duration filter (voice chunks only)...")
+    segmenter = SileroVADSegmenter(DEFAULT_CONFIG.audio, DEFAULT_CONFIG.vad)
+    chunk_size = DEFAULT_CONFIG.audio.chunk_size
+    silence = np.zeros(chunk_size, dtype=np.float32)
+
+    # Simulate: onset confirmed on 2 voiced chunks (64 ms), then the burst ends.
+    segmenter.is_speaking = True
+    segmenter.speech_start_time = time.time()
+    segmenter.current_utterance = [silence] * 10   # 320 ms pre-speech padding
+    segmenter.voice_chunks_count = 2               # only 64 ms of actual voice
+    segmenter.last_voice_chunk_index = 9
+    segmenter.silence_chunks_count = 0
+
+    completed = None
+    for _ in range(segmenter.required_silence_chunks + 5):
+        utt, _prob = segmenter.process_chunk(silence)
+        if utt is not None:
+            completed = utt
+            break
+
+    assert completed is None, "Burst shorter than min_speech_duration_ms must be rejected"
+    assert not segmenter.is_speaking, "State must reset after a rejected burst"
+    assert segmenter.voice_chunks_count == 0, "Voice chunk counter must reset"
+    print("[OK] Sub-minimum burst rejected (no silence sent to ASR)")
+
+
+def test_trailing_silence_trim():
+    """
+    Phase 3.1 regression: a finalized utterance must keep voiced audio plus a
+    short pad, not the whole 800 ms pause tail (a known hallucination source).
+    """
+    print("\nTesting trailing silence trim on finalize...")
+    segmenter = SileroVADSegmenter(DEFAULT_CONFIG.audio, DEFAULT_CONFIG.vad)
+    chunk_size = DEFAULT_CONFIG.audio.chunk_size
+    chunk_dur = chunk_size / DEFAULT_CONFIG.audio.sample_rate
+    silence = np.zeros(chunk_size, dtype=np.float32)
+    voiced = np.full(chunk_size, 0.05, dtype=np.float32)
+
+    # Simulate 320 ms of confirmed speech followed by a natural pause
+    segmenter.is_speaking = True
+    segmenter.speech_start_time = time.time()
+    segmenter.current_utterance = [voiced] * 10
+    segmenter.voice_chunks_count = 10
+    segmenter.last_voice_chunk_index = 9
+    segmenter.silence_chunks_count = 0
+
+    completed = None
+    for _ in range(segmenter.required_silence_chunks + 5):
+        utt, _prob = segmenter.process_chunk(silence)
+        if utt is not None:
+            completed = utt
+            break
+
+    assert completed is not None, "Valid speech burst must be finalized"
+
+    expected_chunks = 9 + 1 + segmenter.trailing_pad_chunks
+    expected_dur = expected_chunks * chunk_dur
+    untrimmed_dur = (10 + segmenter.required_silence_chunks) * chunk_dur
+
+    assert abs(completed["duration"] - expected_dur) < 1e-6, (
+        f"Expected {expected_dur:.3f}s (voice + pad), got {completed['duration']:.3f}s"
+    )
+    assert completed["duration"] < untrimmed_dur, "Trailing silence must be trimmed"
+    assert abs(completed["speech_duration"] - 10 * chunk_dur) < 1e-6, (
+        "speech_duration must count voice only"
+    )
+    print(
+        f"[OK] Finalized {untrimmed_dur:.2f}s -> {completed['duration']:.2f}s "
+        f"(speech {completed['speech_duration']:.2f}s, trimmed tail)"
+    )
+
 
 if __name__ == "__main__":
     test_vad_pipeline()
+    test_min_speech_duration_filter()
+    test_trailing_silence_trim()
+    print("\nAll VAD pipeline unit tests completed successfully!")
