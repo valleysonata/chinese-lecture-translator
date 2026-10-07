@@ -9,9 +9,13 @@ A lightweight Windows desktop application designed to help STEM students follow 
 - [x] **Phase 1: Microphone + Local Silero VAD**
 - [x] **Phase 2: Mandarin ASR Engine (Groq Whisper + Code-Switching)**
 - [x] **Phase 3: Fast English Live Translation Layer (Groq Qwen/LLM)**
+- [x] **Feat 3.1: Anti-Hallucination & Conservative Meaning Translation**
+- [x] **Feat 3.1.1: Pipeline Hardening (VAD speech filtering, session logs, drop metrics)**
 - [ ] **Phase 4: Slide Context & Course Glossary Integration**
 - [ ] **Phase 5: PyQt6 Transparent Overlay UI**
 - [ ] **Phase 6: Full 60-90 Minute Endurance Test**
+
+Contributor guidance, repo layout, and commit conventions live in [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -53,5 +57,15 @@ py scripts\test_phase3.py --benchmark-cases
 py scripts\test_phase3.py --text "這個 node 已經不平衡，所以我們需要做 right rotation。"
 
 # Run continuous live stream: Mic -> VAD -> ASR -> Fast English Translation
+# (add --duration 120 for a timed run)
 py scripts\test_phase3.py
+```
+*Live runs write a JSONL session log to `storage\session_logs\` containing every
+transcript, translation, latency, and dropped item for after-action review.*
+
+### Offline Regression Tests (no microphone, no API calls)
+```powershell
+py tests\test_vad.py
+py tests\test_hallucination_filter.py
+py tests\test_backpressure.py
 ```
