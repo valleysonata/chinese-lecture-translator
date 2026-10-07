@@ -38,19 +38,16 @@ class ASRConfig:
     language: str = "zh"              # Mandarin Chinese
     temperature: float = 0.0          # Low temperature for deterministic transcription
     timeout_seconds: float = 8.0      # Bounded timeout so stalled requests don't hang pipeline
-    # Initial prompt primes Whisper decoder to output English technical terms naturally instead of homophones
-    initial_prompt: str = (
-        "以下是台灣交通大學資訊工程課程課堂演講，包含繁體中文與英文專業術語，"
-        "如 binary tree, AVL tree, balance factor, node, rotation, pointer, recursion, algorithm, complexity."
-    )
+    # Terminology-only prompt primes Whisper vocabulary without triggering sentence-level prompt leakage
+    initial_prompt: str = "binary tree, AVL tree, balance factor, node, rotation, pointer, recursion, algorithm, complexity."
 
 @dataclass
 class TranslationConfig:
     provider: str = "groq"            # "groq" or "local"
     model: str = "qwen/qwen3.8-27b"   # High-accuracy bilingual model on Groq (~0.5s latency)
-    temperature: float = 0.1          # Low temperature for factual translation
+    temperature: float = 0.0          # Strict deterministic translation (prevents invented context)
     timeout_seconds: float = 5.0      # Fast bounded timeout
-    max_tokens: int = 150             # Concise 1-2 sentence translations
+    max_tokens: int = 100             # Conservative concise 1-2 sentence translations
 
 @dataclass
 class AppConfig:

@@ -40,6 +40,29 @@ class GroqASREngine(ASREngine):
             
         return buf.getvalue()
 
+    def _filter_hallucinations(self, text: str, initial_prompt: Optional[str] = None) -> str:
+        """Filters common Whisper subtitle artifacts and prompt echo."""
+        cleaned = text.strip()
+        if not cleaned or cleaned in {"-", "--", "...", "。", "，", "？", "！"}:
+            return ""
+
+        hallucination_phrases = [
+            "本集完", "※ 本集完", "本集結束", "請不吝點贊", "謝謝觀看", "謝謝收看",
+            "多謝收看", "下集再見", "歡迎訂閱", "請訂閱", "點贊", "投幣", "收藏",
+            "感谢您的观看", "感谢收看", "多謝您的收看,下次見!", "多謝您的收看", "下次見"
+        ]
+        for phrase in hallucination_phrases:
+            cleaned = cleaned.replace(phrase, "").strip()
+
+        # Check for prompt echo / leakage
+        if initial_prompt:
+            prompt_core = initial_prompt.strip()
+            # If transcript is an exact copy or substring of the prompt
+            if cleaned == prompt_core or (len(cleaned) >= 15 and cleaned in prompt_core):
+                return ""
+
+        return cleaned
+
     def transcribe(
         self,
         audio_data: Union[np.ndarray, bytes, str, Path],
@@ -84,13 +107,16 @@ class GroqASREngine(ASREngine):
             response = self.client.audio.transcriptions.create(**kwargs)
             latency = time.time() - start_time
             
-            transcript = getattr(response, "text", "") or ""
+            raw_transcript = getattr(response, "text", "") or ""
             duration = getattr(response, "duration", 0.0) or 0.0
             segments = getattr(response, "segments", []) or []
 
+            # Clean and filter subtitle hallucinations or prompt leakage
+            transcript = self._filter_hallucinations(raw_transcript, effective_prompt)
+
             return {
                 "success": True,
-                "transcript": transcript.strip(),
+                "transcript": transcript,
                 "language": self.config.language,
                 "latency": round(latency, 3),
                 "duration": round(float(duration), 2),

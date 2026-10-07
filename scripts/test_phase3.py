@@ -246,15 +246,49 @@ def live_pipeline_mode(device_index: int | None = None, duration: int | None = N
         print(f" Avg Total Lag Behind : {avg_delay:.2f} s")
         print("=" * 60)
 
+def test_benchmark_cases():
+    """Run benchmark testing across Pure English, Pure Mandarin, and Mixed Code-Switching."""
+    print("=" * 65)
+    print("  PHASE 3.1: Benchmark Translation Quality & Conservatism")
+    print("=" * 65)
+    cases = [
+        ("Pure English", "This node is unbalanced, so we perform a right rotation."),
+        ("Pure Mandarin", "這個節點已經不平衡，所以我們需要做右旋。"),
+        ("Mixed Code-Switching", "這個 node 已經不平衡，所以我們需要做 right rotation。"),
+        ("Short Phrase (No outro)", "謝謝大家"),
+        ("Awkward Spoken Grammar", "我們就需要出with rotation"),
+        ("Incomplete Sentence", "如果這個 node 的 balance factor 大於 1"),
+        ("Trail-off / Pause", "好，再看看")
+    ]
+
+    try:
+        engine = GroqTranslationEngine()
+    except Exception as e:
+        print(f"[ERROR]: {e}")
+        return
+
+    for category, text in cases:
+        res = engine.translate(text)
+        print(f"[{category}]")
+        print(f"  INPUT : {text}")
+        if res["success"]:
+            print(f"  OUTPUT: {res['translation']} ({res['latency']}s)")
+        else:
+            print(f"  ERROR : {res['error']}")
+        print("-" * 65)
+
 def main():
     parser = argparse.ArgumentParser(description="Phase 3: Fast English Live Translation Pipeline")
     parser.add_argument("--text", type=str, default=None, help="Directly test translation on a text string")
     parser.add_argument("--file", type=str, default=None, help="Test ASR + translation on an audio file")
+    parser.add_argument("--benchmark-cases", action="store_true", help="Run benchmark across Pure English, Mandarin, and Mixed cases")
     parser.add_argument("--device", type=int, default=None, help="Audio input device index")
     parser.add_argument("--duration", type=int, default=None, help="Auto stop after N seconds")
     args = parser.parse_args()
 
-    if args.text:
+    if args.benchmark_cases:
+        test_benchmark_cases()
+    elif args.text:
         test_text_mode(args.text)
     elif args.file:
         test_file_mode(Path(args.file))
